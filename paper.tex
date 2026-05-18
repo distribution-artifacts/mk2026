@@ -1,0 +1,48 @@
+\documentclass[acmsmall,screen,review,anonymous]{acmart}
+
+\settopmatter{printacmref=false}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+
+\acmConference[miniKanren 2026]{The 2026 miniKanren and Relational Programming Workshop}{August 24, 2026}{Indianapolis, Indiana, USA}
+\acmYear{2026}
+\copyrightyear{2026}
+
+\title{Proflog: Implementation and Rationale}
+
+\begin{document}
+
+\begin{abstract}
+Proflog is a relational implementation of a first-order logic programming
+language and proof kernel built in the miniKanren tradition. This paper
+describes its implementation strategy, its rationale, and the engineering
+lessons learned from making theorem proving, proof search, and answer synthesis
+available as relational computations.
+\end{abstract}
+
+\maketitle
+
+\section{Introduction}
+
+TODO: Convert and refine the `Introduction` material from \texttt{paper.txt}.
+
+\section{Implementation}
+
+TODO: Describe the Proflog architecture, including the frontend, formula
+representation, proof kernel, proof profiles, answer modes, and test strategy.
+
+\section{Discussion}
+
+TODO: Explain what Proflog contributes to the miniKanren and relational
+programming setting, with particular attention to reverse execution, partial
+synthesis, proof-profile design, and limitations.
+
+\section{Acknowledgments}
+
+TODO: Add acknowledgments for the camera-ready version. Keep the submitted
+version anonymous if required.
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}
+
