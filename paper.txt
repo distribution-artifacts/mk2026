@@ -4,12 +4,28 @@ Proflog, its implementation and rationale
 
 Abstract:
 
+We report on an implementation of Melvin Fitting's Proflog, a logic programming language based on the tableau proof procedure. By extending a tableau theorem prover for first-order logic with equality, written in Clojure's core.logic, with the Procedure Call rule, formulae acquire a programmatic character. Additionally, following the work of alphaLeanTAP, program evaluation generates a corresponding proof object.
+
 Introduction:
+
+Fitting proposed Proflog in 1993 as an exploration in alternative bases for logic programming: where Prolog employs resolution to manipulate Horn clauses, Proflog would manipulate formulae of first-order logic (with the theory of equality) via the tableau proof procedure, augmented with a mechanism for recursion. While the core tableau procedure is standard, the recursive mechanism is novel, and allows for subsidiary tableau closure attempts to be prompted, appending additional proof-subtrees. This operationalizes tableau proofs as a model of computation.
 
 Implementation:
 
+[proof kernel]
+
+[surface syntax]
+
+[examples - P1 and P2 from Fitting's paper]
+
 Discussion:
+
+The connections between logic and computation are diverse; in addition to well-studied approaches like those grounded in the Curry-Howard Correspondence, logic programming directly manipulates programs expressed in the form of statements of a given logic, according to rules prescribed by a proof procedure for the logic, possibly with additional non-logical computational content. There are many varieties of logics and proof procedures, and in turn it seems there should be many varieties of corresponding computational content induced by this logical content. Fitting proposed Proflog as a demonstration of one such variant in this correspondence, and its implementation therefore fills in a gap in the literature, as the basis for future investigation of yet further varieties. 
 
 Acknowledgements:
 
+We wish to acknowledge the FUTO Fellowship program, Seth Frey of UC Davis, and Bloominglabs, Inc. for their support in the conduct of this research. We declare for transparency the use of the following machine learning tools in the development of the code written for this project: GPT-5.4 and 5.5; Opus-4.6 and 4.7. 
+
 References:
+
+https://id144254.securedata.net/melvinfitting/bookspapers/pdf/papers/LPTableaus.pdf
