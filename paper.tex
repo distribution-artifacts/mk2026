@@ -1,48 +1,292 @@
 \documentclass[acmsmall,screen,review,anonymous]{acmart}
 
-\settopmatter{printacmref=false}
+\setcopyright{none}
+\settopmatter{printacmref=true}
 \renewcommand\footnotetextcopyrightpermission[1]{}
 
 \acmConference[miniKanren 2026]{The 2026 miniKanren and Relational Programming Workshop}{August 24, 2026}{Indianapolis, Indiana, USA}
 \acmYear{2026}
 \copyrightyear{2026}
 
-\title{Proflog: Implementation and Rationale}
+\title{Proflog: A Tableau-Based Logic Programming Kernel in miniKanren}
 
 \begin{document}
 
 \begin{abstract}
-Proflog is a relational implementation of a first-order logic programming
-language and proof kernel built in the miniKanren tradition. This paper
-describes its implementation strategy, its rationale, and the engineering
-lessons learned from making theorem proving, proof search, and answer synthesis
-available as relational computations.
+We report on an implementation of Melvin Fitting's Proflog, a logic programming
+language based on the tableau proof procedure.  The system extends a first-order
+tableau prover with equality, written in Clojure's \texttt{core.logic}, with
+Fitting's Procedure Call rule.  Formulae thereby acquire a programmatic
+character: evaluating a program is a matter of closing the relevant tableau.
+Following alphaLeanTAP, successful evaluation also produces an explicit proof
+object.  We describe the proof kernel, the surface-to-kernel translation, and
+worked executions of Fitting's reference programs.
 \end{abstract}
+
+\ccsdesc[500]{Theory of computation~Logic and verification}
+\ccsdesc[300]{Theory of computation~Automated reasoning}
+\ccsdesc[300]{Software and its engineering~Constraint and logic languages}
+
+\keywords{miniKanren, logic programming, tableaux, Proflog, proof search}
 
 \maketitle
 
 \section{Introduction}
 
-TODO: Convert and refine the `Introduction` material from \texttt{paper.txt}.
+Fitting proposed Proflog as an exploration in alternative bases for logic
+programming~\cite{fitting1994tableaux}.  Prolog operationalizes Horn clauses by
+resolution.  Proflog instead manipulates formulae of first-order logic with
+equality by a tableau proof procedure, augmented with a mechanism for recursive
+procedure calls.  The core tableau procedure is standard: branch closure,
+alpha/beta decomposition of connectives, gamma/delta treatment of quantifiers,
+and equality over a weak Herbrand setting.  The programming step is the
+Procedure Call rule.  During an attempt to close a tableau, a saved literal
+whose predicate is defined by the program may open a subsidiary tableau for the
+corresponding clause body.
+
+This changes the usual programming/proving boundary.  In Proflog, a program is
+not a collection of Horn clauses with procedural negation as failure.  It is a
+finite collection of first-order definitions, at most one per relation symbol,
+whose queries are interpreted by two proof searches: a query succeeds when the
+negated query closes, fails when the query itself closes, and is unresolved when
+neither direction closes within the admitted search.  This mirrors Fitting's
+supervaluation semantics and makes some operational warnings visible, especially
+the warning that factoring a formula into an auxiliary relation may change the
+program.
+
+The implementation reported here is written in Clojure and \texttt{core.logic}
+in the miniKanren tradition~\cite{byrd2009relational,corelogic}.  Its immediate
+prover lineage is alphaLeanTAP, a relational tableau prover for first-order
+classical logic~\cite{near2008alphaleantap}, and a Clojure/core.logic.nominal
+implementation reference by Amin~\cite{aminLeantap}.  Proflog extends that
+lineage in the direction Fitting sketched: first-order proof search becomes a
+program evaluator, and program evaluation returns proof objects whose step tags
+record the tableau work performed.
 
 \section{Implementation}
 
-TODO: Describe the Proflog architecture, including the frontend, formula
-representation, proof kernel, proof profiles, answer modes, and test strategy.
+\subsection{Proof Kernel}
+
+The kernel is a relation over proof states.  Its central entry point is
+\texttt{prove-stateo}; public calls use \texttt{kernel/prove} for direct
+formulae and \texttt{kernel/prove-program} for program-bearing formulae.  A
+branch state contains the focused formula, pending formulae, saved literals,
+the lexical environment for bound variables, gamma-introduced proof variables,
+delta parameters, an explicit equality substitution, delayed disequalities, the
+compiled program, fuel, and the proof term being constructed.
+
+The equality design is deliberately explicit.  Positive equality extends a
+free-constructor substitution; negative equality is retained in a symbolic
+disequality store until later bindings force closure.  This keeps equality,
+disequality, and procedure-call interaction visible in proof objects.  A small
+closure proof, for example, has the shape:
+
+\begin{verbatim}
+(conj (savefml (close)))
+\end{verbatim}
+
+An equality/disequality proof exposes the order of work:
+
+\begin{verbatim}
+(conj (neq-store (eq-step (eq-bind) (neq-close))))
+\end{verbatim}
+
+Procedure calls add \texttt{pos-call} and \texttt{neg-call} proof steps.  A
+positive call closes the relation body.  A negative call closes the normalized
+negation of that body.  Both calls run under the same kernel relation rather
+than through host-language evaluation of the source program.
+
+\subsection{Surface Syntax and Descent}
+
+The implemented frontend is a Clojure-readable prefix DSL that preserves
+Fitting's clause organization.  The intended handwritten notation is:
+
+\begin{verbatim}
+p(x) :- x = a.
+
+only-zero(x) := forall y. (x != y or y = zero).
+zero-only(x) :- only-zero(x).
+\end{verbatim}
+
+The frontend form uses \texttt{|-} for a real Proflog clause and \texttt{:=}
+for a frontend-only abbreviation:
+
+\begin{verbatim}
+(def peano-language
+  (pf/language
+    (constants zero)
+    (functions (s 1))
+    (relations (zero-only 1))))
+
+(def zero-only-program
+  (pf/proflog peano-language
+    (:= (only-zero x)
+      (forall [y]
+        (or (!= x y)
+            (= y zero))))
+    (|- (zero-only x)
+        (only-zero x))))
+\end{verbatim}
+
+After macro expansion and compilation, the kernel sees tagged formula data.  The
+simple query \texttt{p(a)} descends schematically to:
+
+\begin{verbatim}
+(pos (app p (app a)))
+\end{verbatim}
+
+The inlined \texttt{zero-only/1} body descends schematically to:
+
+\begin{verbatim}
+(forall
+  (tie y
+    (or
+      (neq (var x) (var y))
+      (eq (var y) (app zero)))))
+\end{verbatim}
+
+The public query API then probes the kernel in two directions:
+
+\begin{verbatim}
+(query/query-succeeds program query n fuel)
+(query/query-fails    program query n fuel)
+\end{verbatim}
+
+\texttt{query-succeeds} asks the kernel to close the negated query;
+\texttt{query-fails} asks it to close the query itself.  Open-answer examples
+use \texttt{pf/run}, which binds visible answer variables in the style of
+miniKanren's \texttt{run}, translates the query to the same backend formula,
+and exports bindings from the proof-backed answer layer.
+
+\subsection{Fitting's Reference Programs}
+
+Fitting's first reference program defines even and odd natural numbers over the
+language with constant \texttt{zero} and unary successor \texttt{s}:
+
+\begin{verbatim}
+even(x) :- x = zero
+        or exists y. (x = s(y) and odd(y)).
+
+odd(x) :- forall y. (even(y) -> x != y).
+\end{verbatim}
+
+The implemented frontend form is:
+
+\begin{verbatim}
+(pf/proflog p1-language
+  (|- (even x)
+    (or (= x zero)
+        (exists [y]
+          (and (= x (s y))
+               (odd y)))))
+  (|- (odd x)
+    (forall [y]
+      (implies (even y)
+               (!= x y)))))
+\end{verbatim}
+
+The second reference program is a one-or-two-token Nim game.  A position wins
+when there is a legal move to a position that does not win:
+
+\begin{verbatim}
+win(x) :- exists y.
+            ((x = s(y) or x = s(s(y))) and not win(y)).
+\end{verbatim}
+
+The implementation keeps the move test inlined, as in Fitting's presentation:
+
+\begin{verbatim}
+(pf/proflog p2-language
+  (|- (win x)
+    (exists [y]
+      (and (or (= x (s y))
+               (= x (s (s y))))
+           (not (win y))))))
+\end{verbatim}
+
+Table~\ref{tab:fitting-results} summarizes the focused Fitting suite results.
+The suite was run as a kernel-level test gate and completed with six tests,
+eighty-one assertions, and no failures or errors.  It covers forward success,
+forward refutation, answer synthesis, partial synthesis, and unresolved
+classification.
+
+\begin{table}[h]
+  \caption{Representative Fitting-program outcomes}
+  \label{tab:fitting-results}
+  \begin{tabular}{lll}
+    \toprule
+    Case & Mode & Outcome \\
+    \midrule
+    \texttt{even(0)} & forward success & succeeds \\
+    \texttt{odd(s(0))} & forward success & succeeds \\
+    \texttt{odd(0)} & forward refutation & fails \\
+    \texttt{win(4)} & forward success & succeeds \\
+    \texttt{win(3)} & forward refutation & fails \\
+    \texttt{move(1,0)} & auxiliary forward success & succeeds \\
+    \texttt{move(0,1)} & auxiliary forward refutation & fails \\
+    factored \texttt{win(1)} & status classification & unresolved \\
+    \texttt{append(x,y,[a,b,c])} & answer synthesis & target found \\
+    \texttt{reverse([a,b,c,a],cons(a,r))} & partial synthesis & target found \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The factored Nim case is included because it demonstrates that the evaluator is
+not merely computing the Nim recurrence in the host language.  If the program
+introduces an auxiliary relation
+
+\begin{verbatim}
+win(x) :- exists y. (move(x, y) and not win(y)).
+move(x, y) :- x = s(y) or x = s(s(y)).
+\end{verbatim}
+
+then \texttt{move/2} itself is decidable on ground calls, but \texttt{win(1)}
+remains unresolved in the tested kernel setting.  This is the operational
+boundary Fitting warned about: a logically tempting refactoring changes how
+procedure calls are admitted and discharged.
+
+\subsection{Test Strategy}
+
+The implementation separates routine regression from slow semantic probes.  The
+Fitting suite disables older host-side overlays while running, so its promoted
+rows cannot pass by fixture-specific evaluation.  Representative proof objects
+are inspected for ordinary kernel and answer-overlay evidence, including
+procedure-call tags and the absence of diagnostic sidecar settlement tags.  The
+same suite also includes finite-domain examples, list programs, and group
+verifier formulae to check that the proof kernel and proof profiles are not
+tailored only to the two paper examples.
 
 \section{Discussion}
 
-TODO: Explain what Proflog contributes to the miniKanren and relational
-programming setting, with particular attention to reverse execution, partial
-synthesis, proof-profile design, and limitations.
+Proflog is useful to the miniKanren setting because it gives another concrete
+point in the space between logic and computation.  The program text is not a
+relational interpreter written in a host language, nor is it a Prolog program
+embedded in Clojure.  It is a collection of first-order formulae whose
+operational content comes from tableau closure plus a procedure-call rule.  That
+makes proof search, program evaluation, and proof-object construction part of
+one relational computation.
 
-\section{Acknowledgments}
+The implementation is also a cautionary example.  Fitting's semantics are not
+Prolog's semantics with a different syntax.  Query failure is proved, not
+assumed by search exhaustion.  Undefined and unresolved cases are first-class
+outcomes.  Refactorings that would be harmless in a purely extensional reading
+can change operational behavior when they introduce auxiliary procedure calls.
+These facts show up in tests rather than only in prose.
 
-TODO: Add acknowledgments for the camera-ready version. Keep the submitted
-version anonymous if required.
+The current system is not presented as an efficient logic programming language.
+Some deeper recursive examples remain search-control frontiers, and several
+successful answer and partial-synthesis tests are intentionally kept out of the
+default fast path.  The contribution is instead the executable correspondence:
+Fitting's theoretical Proflog can be mechanized as a proof-producing
+miniKanren-style kernel, and its non-trivial examples can be evaluated through
+that kernel with correctness results visible at the proof boundary.
+
+\begin{acks}
+Acknowledgments are omitted for anonymous review.
+\end{acks}
+
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{references}
 
 \end{document}
-
