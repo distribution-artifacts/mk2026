@@ -12,3 +12,7 @@
 *.toc
 .#*
 \#*\#
+paper/edits.txt
+paper/edits.txt~
+code/target/
+code/.lein-*

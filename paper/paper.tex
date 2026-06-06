@@ -17,10 +17,10 @@ We report on an implementation of Melvin Fitting's Proflog, a logic programming
 language based on the tableau proof procedure.  The system extends a first-order
 tableau prover with equality, written in Clojure's \texttt{core.logic}, with
 Fitting's Procedure Call rule.  Formulae thereby acquire a programmatic
-character: evaluating a program is a matter of closing the relevant tableau.
-Following alphaLeanTAP, successful evaluation also produces an explicit proof
-object.  We describe the proof kernel, the surface-to-kernel translation, and
-worked executions of Fitting's reference programs.
+character: evaluating a program is a matter of closing the relevant
+tableau(s).  Following alphaLeanTAP, successful evaluation also produces an
+explicit proof trace.  We describe the proof kernel, the surface-to-kernel
+translation, and worked executions of Fitting's reference programs.
 \end{abstract}
 
 \ccsdesc[500]{Theory of computation~Logic and verification}
@@ -34,15 +34,61 @@ worked executions of Fitting's reference programs.
 \section{Introduction}
 
 Fitting proposed Proflog as an exploration in alternative bases for logic
-programming~\cite{fitting1994tableaux}.  Prolog operationalizes Horn clauses by
-resolution.  Proflog instead manipulates formulae of first-order logic with
-equality by a tableau proof procedure, augmented with a mechanism for recursive
-procedure calls.  The core tableau procedure is standard: branch closure,
-alpha/beta decomposition of connectives, gamma/delta treatment of quantifiers,
-and equality over a weak Herbrand setting.  The programming step is the
-Procedure Call rule.  During an attempt to close a tableau, a saved literal
-whose predicate is defined by the program may open a subsidiary tableau for the
-corresponding clause body.
+programming~\cite{fitting1994tableaux}.  By comparison, Prolog
+operationalizes Horn clauses by resolution; Proflog instead manipulates
+formulae of first-order logic with equality by a tableau proof procedure,
+augmented with a mechanism for recursive procedure calls.  The core tableau
+procedure employs standard branch closure, alpha/beta decomposition of
+connectives, and gamma/delta treatment of quantifiers.  Equality is defined
+over a weak Herbrand setting, in which equal terms must be syntactically
+identical after branch substitutions are applied.  The source code of a Proflog
+program is a series of clauses, each an implication between a formula \(\phi\)
+and an atomic formula \(R\):
+\[
+  R(x_1,\ldots,x_n) \leftarrow \phi(x_1,\ldots,x_n).
+\]
+``Programmaticity'' is introduced via the Procedure Call rule, which allows
+clauses to compose.  During an attempt to close a tableau, a saved literal
+whose relation is defined by the program may open a subsidiary tableau for the
+corresponding clause body; the subsidiary proof then contributes to closure of
+the original branch.  Figure~\ref{fig:layers} summarizes the implementation
+layers around this kernel rule.
+
+\begin{figure}[t]
+  \centering
+  \begin{tabular}{c}
+    \fbox{\begin{minipage}{0.78\linewidth}\centering
+      \texttt{proflog} REPL and paper examples
+    \end{minipage}} \\
+    \(\downarrow\) \\
+    \fbox{\begin{minipage}{0.78\linewidth}\centering
+      Prefix frontend: \texttt{language}, \texttt{proflog}, \texttt{q},
+      \texttt{run}
+    \end{minipage}} \\
+    \(\downarrow\) \\
+    \fbox{\begin{minipage}{0.78\linewidth}\centering
+      Compiled language and clause table
+    \end{minipage}} \\
+    \(\downarrow\) \\
+    \fbox{\begin{minipage}{0.78\linewidth}\centering
+      Query layer: success, failure, answer export, status
+    \end{minipage}} \\
+    \(\downarrow\) \\
+    \fbox{\begin{minipage}{0.78\linewidth}\centering
+      Proof-profile dispatcher
+    \end{minipage}} \\
+    \(\downarrow\) \\
+    \fbox{\begin{minipage}{0.78\linewidth}\centering
+      Tableau kernel with equality and Procedure Call
+    \end{minipage}}
+  \end{tabular}
+  \caption{Reviewer-visible Proflog layers from surface programs to the
+  proof-producing kernel.}
+  \Description{A vertical stack showing the Proflog REPL and examples,
+  prefix frontend, compiled language and clause table, query layer,
+  proof-profile dispatcher, and tableau kernel.}
+  \label{fig:layers}
+\end{figure}
 
 This changes the usual programming/proving boundary.  In Proflog, a program is
 not a collection of Horn clauses with procedural negation as failure.  It is a
@@ -60,7 +106,7 @@ prover lineage is alphaLeanTAP, a relational tableau prover for first-order
 classical logic~\cite{near2008alphaleantap}, and a Clojure/core.logic.nominal
 implementation reference by Amin~\cite{aminLeantap}.  Proflog extends that
 lineage in the direction Fitting sketched: first-order proof search becomes a
-program evaluator, and program evaluation returns proof objects whose step tags
+program evaluator, and program evaluation returns proof traces whose step tags
 record the tableau work performed.
 
 \section{Implementation}
@@ -74,6 +120,17 @@ branch state contains the focused formula, pending formulae, saved literals,
 the lexical environment for bound variables, gamma-introduced proof variables,
 delta parameters, an explicit equality substitution, delayed disequalities, the
 compiled program, fuel, and the proof term being constructed.
+
+The source does not package this state in a record; the slots are the argument
+vector of the kernel relation itself:
+
+\begin{verbatim}
+(defn prove-stateo
+  [fml unexpanded lits env proof-vars
+   sigma sigma-out neqs neqs-out
+   prog gamma-terms fuel proof]
+  ...)
+\end{verbatim}
 
 The equality design is deliberately explicit.  Positive equality extends a
 free-constructor substitution; negative equality is retained in a symbolic
@@ -205,10 +262,8 @@ The implementation keeps the move test inlined, as in Fitting's presentation:
 \end{verbatim}
 
 Table~\ref{tab:fitting-results} summarizes the focused Fitting suite results.
-The suite was run as a kernel-level test gate and completed with six tests,
-eighty-one assertions, and no failures or errors.  It covers forward success,
-forward refutation, answer synthesis, partial synthesis, and unresolved
-classification.
+It covers forward success, forward refutation, answer synthesis, partial
+synthesis, and unresolved classification.
 
 \begin{table}[h]
   \caption{Representative Fitting-program outcomes}
@@ -231,6 +286,59 @@ classification.
   \end{tabular}
 \end{table}
 
+A representative full output row for Fitting's first program is:
+
+\begin{verbatim}
+[{:description
+  "P1 proves odd(s(0)) through the forall-based odd clause",
+  :family :p1,
+  :outcome :succeeds,
+  :classification nil,
+  :max-fuel nil,
+  :id :p1-odd-1-succeeds,
+  :kind :query,
+  :proof-count 1,
+  :expected :succeeds,
+  :proof-steps
+  [neg-call
+   witness
+   conj
+   eq-step
+   par-bind
+   pos-call
+   split
+   free-close
+   witness
+   conj
+   eq-step
+   decompose
+   args
+   par-bind
+   pos-call
+   univ
+   split
+   neg-call-guarded-alt
+   guarded-alt
+   guarded-neg-alt-saturated
+   guarded-scope-done
+   guard-eq
+   eq-bind
+   guard-saturation-done
+   guarded-call-seq-done
+   guarded-seq-done
+   refl-close],
+  :proof-root neg-call}]
+\end{verbatim}
+
+Most tags in this trace are ordinary tableau or equality work, such as
+\texttt{witness}, \texttt{conj}, \texttt{split}, \texttt{univ},
+\texttt{eq-step}, and \texttt{refl-close}.  The tags that are specific to
+Proflog relative to alphaLeanTAP are the procedure-call and guarded-clause
+steps: \texttt{neg-call}, \texttt{pos-call},
+\texttt{neg-call-guarded-alt}, \texttt{guarded-alt}, and the
+\texttt{guarded-*} saturation and sequence tags.  These are the proof-trace
+footprints of Fitting's Procedure Call rule.
+
 The factored Nim case is included because it demonstrates that the evaluator is
 not merely computing the Nim recurrence in the host language.  If the program
 introduces an auxiliary relation
@@ -243,43 +351,63 @@ move(x, y) :- x = s(y) or x = s(s(y)).
 then \texttt{move/2} itself is decidable on ground calls, but \texttt{win(1)}
 remains unresolved in the tested kernel setting.  This is the operational
 boundary Fitting warned about: a logically tempting refactoring changes how
-procedure calls are admitted and discharged.
+procedure calls are admitted and discharged.  In the inlined program, the two
+move alternatives remain ordinary equality and disjunction work inside the
+subsidiary tableau opened for \texttt{win/1}.  In the factored program, the
+same alternatives sit behind a second procedure boundary.  Proflog's Procedure
+Call rule is not a general unfold/fold equivalence principle; it admits calls
+when a saved literal and the current branch state make the corresponding clause
+body usable.  Moving formula structure into a new relation can therefore alter
+which subsidiary tableaux are available at the moment a branch needs to close.
+The example is small, but it exposes the larger point: Proflog programs are not
+only extensional formula collections, but operational tableau objects.
 
-\subsection{Test Strategy}
+\subsection{Proof Profiles}
 
-The implementation separates routine regression from slow semantic probes.  The
-Fitting suite disables older host-side overlays while running, so its promoted
-rows cannot pass by fixture-specific evaluation.  Representative proof objects
-are inspected for ordinary kernel and answer-overlay evidence, including
-procedure-call tags and the absence of diagnostic sidecar settlement tags.  The
-same suite also includes finite-domain examples, list programs, and group
-verifier formulae to check that the proof kernel and proof profiles are not
-tailored only to the two paper examples.
+Fitting emphasizes that Proflog gains expressiveness by using tableaux as the
+programming substrate, but that this substrate also inherits the search costs
+of first-order proof.  The implementation therefore includes proof profiles:
+small, proof-producing dispatch layers for fragments where a specialized
+kernel can close a branch without changing the meaning of a successful proof.
+The current profiles recognize propositional formulae, equality-free
+first-order formulae, and equality-dominated finite fragments used by several
+paper examples.
+
+Profiles are not a separate evaluator for Proflog source programs.  They are
+entered only after the surrounding branch has been isolated from active
+procedure calls and the relevant equality state, and their subproof is recorded
+under an explicit profile tag in the proof trace.  This keeps the main
+Procedure Call semantics intact while allowing the implementation to reuse
+Fitting's recognition that different fragments of the logic have different
+operational envelopes.  The same architecture can be reused to extend and
+experiment with future Proflog implementations: a profile can be added for a
+well-understood fragment, tested as a proof-producing branch rule, and removed
+without changing the surface language.
 
 \section{Discussion}
 
-Proflog is useful to the miniKanren setting because it gives another concrete
-point in the space between logic and computation.  The program text is not a
-relational interpreter written in a host language, nor is it a Prolog program
-embedded in Clojure.  It is a collection of first-order formulae whose
-operational content comes from tableau closure plus a procedure-call rule.  That
-makes proof search, program evaluation, and proof-object construction part of
-one relational computation.
+Proflog is of interest because it gives another concrete point in the space of
+connections between logic and computation.  The current implementation
+demonstrates that the core operational semantics of the tableau proof
+procedure, augmented with the Procedure Call rule, can be defined as a pure
+relation in the miniKanren style.  Proof search, program evaluation, and
+proof-trace construction are furthermore extensible for future experimentation
+via the profile architecture.
 
-The implementation is also a cautionary example.  Fitting's semantics are not
-Prolog's semantics with a different syntax.  Query failure is proved, not
-assumed by search exhaustion.  Undefined and unresolved cases are first-class
-outcomes.  Refactorings that would be harmless in a purely extensional reading
-can change operational behavior when they introduce auxiliary procedure calls.
-These facts show up in tests rather than only in prose.
+The implementation is faithful to Fitting's specification in both its
+strengths and its limitations.  Fitting's semantics require query failure to be
+proved, rather than assumed by search exhaustion.  Undefined and unresolved
+cases are first-class outcomes.  Refactorings that would be harmless in a
+purely extensional reading can change operational behavior when they introduce
+auxiliary procedure calls.
 
-The current system is not presented as an efficient logic programming language.
-Some deeper recursive examples remain search-control frontiers, and several
-successful answer and partial-synthesis tests are intentionally kept out of the
-default fast path.  The contribution is instead the executable correspondence:
-Fitting's theoretical Proflog can be mechanized as a proof-producing
-miniKanren-style kernel, and its non-trivial examples can be evaluated through
-that kernel with correctness results visible at the proof boundary.
+Performance remains an area for future work: recursive examples remain
+search-control frontiers, and several successful answer and partial-synthesis
+tests are intentionally kept out of the default fast path.  However, a gap in
+the literature has been covered: Fitting's theoretical Proflog can now be
+considered mechanized as a proof-producing miniKanren-style kernel, and its
+non-trivial examples can be evaluated through that kernel with correctness
+results visible at the proof boundary.
 
 \begin{acks}
 Acknowledgments are omitted for anonymous review.
